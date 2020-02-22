@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 
+
+# Utilities
+
 # usage: (line_number, regs) list -> (reg: line_number list) dict
 # [(key, [val])] -> {(val: [key])}
 def dictzip(kvs):
@@ -26,6 +29,9 @@ import enum
 import sys
 from collections import namedtuple
 import argparse
+
+
+# Reading code
 
 def remove_comments(l):
     return l.split('#', 1)[0]
@@ -105,14 +111,14 @@ register_regexps = [
 
 compile_regexps = lambda l: list(map(re.compile, l))
 
-register_common_regexp = re.compile(r"%\w+")
+register_common_regexp_att = re.compile(r"%\w+")
 register_regexps_att = compile_regexps(
-    map(lambda s: '%' + s, register_regexps))
+    map(lambda s: f'%{s}', register_regexps))
 
 # str -> str gen
 def extract_regs_att(s):
-    for reg in register_common_regexp.findall(s):
-        for regexp in register_regexps:
+    for reg in register_common_regexp_att.findall(s):
+        for regexp in register_regexps_att:
             if regexp.fullmatch(reg):
                 break
         else:
@@ -136,6 +142,7 @@ extract_regs_funcs = {
 }
 
 
+# Opcode categories
 
 OpcodeCategory = enum.Enum("OpcodeCategory",
                            ["PSEUDOOP", "JUMP", "JUMP_AWAY",
@@ -147,7 +154,7 @@ def opcode_cat_is_jump(cat):
 def opcode_cat_is_nofallthrough(cat):
     return cat in (OpcodeCategory.JUMP_AWAY, OpcodeCategory.RETURN)
 
-# order may be significant
+# Note: order is significant
 opcode_category_pred_table = [
     (OpcodeCategory.PSEUDOOP, lambda s: s.startswith('.')),
     (OpcodeCategory.JUMP_AWAY, lambda s: s == 'jmp'),
@@ -163,18 +170,8 @@ def opcode_cat(opcode):
             return cat
     return OpcodeCategory.MISC
 
-# Pseudo-code:
-# 1. Read statement => line_number, line
-# 2. Split line => (label, op, rest)
-# 3. End block, start new one, put name in ldict
-# 4. Get op category => cat
-# 5. Pseudo-Op -> skip to [push]
-# 6. Jump -> add entry to jtab
-# 7. Extract regs and dedup => regs
-# 8. Add (line_number, regs) to block.reglist
-# 9. Add op.lower() to block.oplist
-# 10. [push] Rebuild line => eline
-# 11. Add (line_number, eline) to block
+
+# Build internal representation of the graph
 
 class Block:
     def __init__(self, name, line):
@@ -206,9 +203,6 @@ class Block:
     def starting_line(self):
         return self._line
 
-def rebuild_line(instr, args):
-    return f"{instr} {','.join(args)}" if args else instr
-
 JumpType = enum.Enum("JumpType",
                      ["NORMAL", "NEXT"])
 JumpTableEntry = namedtuple("JumpTableEntry",
@@ -234,7 +228,6 @@ def get_structure(line_iter, regs_function):
         if instr is None:
             continue
 
-        reline = rebuild_line(instr, rest)
         cat = opcode_cat(instr)
 
         prev_line = None if opcode_cat_is_nofallthrough(cat) else idx
@@ -249,22 +242,26 @@ def get_structure(line_iter, regs_function):
             regs = append_dedup(map(regs_function, rest))
             linstr = instr.lower()
 
-            B().push(idx, reline, regs, linstr)
+            B().push(idx, (instr, rest), regs, linstr)
         else:
-            B().push(idx, reline)
+            B().push(idx, (instr, rest))
 
     return blocks, jtab
 
 
+# Graph writing functions
 
 def block_name(b):
     return f"block_at_{b.starting_line()}"
 
-def write_line(f, nl, s):
+def rebuild_line(instr, args):
+    return f"{instr} {','.join(args)}" if args else instr
+
+def write_line(f, nl, line_parts):
     print(
 f'''<TR>
 <TD><FONT COLOR="#606060">{nl+1}</FONT></TD>
-<TD ALIGN="LEFT" PORT="l{nl}">{s}</TD>
+<TD ALIGN="LEFT" PORT="l{nl}">{rebuild_line(*line_parts)}</TD>
 </TR>''', file=f)
 
 def block_title(b):
@@ -326,7 +323,6 @@ def main():
     syntax_tab = {"att": AssemblerSyntax.ATT,
                   "intel": AssemblerSyntax.INTEL}
     parser.add_argument("-s", "--syntax",
-                        type=lambda x: syntax_tab[x],
                         choices=list(syntax_tab.keys()),
                         default='att')
 
@@ -334,7 +330,7 @@ def main():
 
     ns = parser.parse_args()
     name = ns.filename
-    syntax = ns.syntax
+    syntax = syntax_tab[ns.syntax]
 
     f = sys.stdin if name == '-' else open(name, 'r')
 
