@@ -146,7 +146,7 @@ register_regexps = [
     r"k[0-7]"
 ]
 
-compile_regexps = lambda l: list(map(re.compile, l))
+compile_regexps = lambda l: list(map(lambda s: re.compile(s, re.I), l))
 
 register_common_regexp_att = re.compile(r"%\w+")
 register_regexps_att = compile_regexps(
@@ -223,7 +223,7 @@ class Block:
         if regs is not None:
             self._regs.append((nl, map(str.lower, regs)))
         if op is not None:
-            self._ops.add(op)
+            self._ops.add(op.lower())
 
     def name(self):
         return self._name
@@ -240,6 +240,9 @@ class Block:
     def starting_line(self):
         return self._line
 
+    def empty(self):
+        return self._lines == []
+
 JumpType = enum.Enum("JumpType",
                      ["NORMAL", "NEXT"])
 JumpTableEntry = namedtuple("JumpTableEntry",
@@ -250,27 +253,27 @@ def get_structure(line_iter, regs_function):
     blocks = []
     jtab = []
     B = lambda: blocks[-1]
-    prev_line = None
+    prev_seq = False
     for idx, line in line_iter:
         label, instr, rest = split_line(line)
 
         if label is not None:
-            if prev_line is not None:
+            if prev_seq or blocks and B().empty():
                 jtab.append(JumpTableEntry(
-                    B(), prev_line, label, JumpType.NEXT))
+                    B(), None, label, JumpType.NEXT))
             blocks.append(Block(label, idx))
 
         if instr is None:
             continue
 
-        if not blocks:
-            blocks.append(Block(None, 0))
-
         cat = instruction_category(instr)
-        prev_line = (None if instruction_cat_is_nofallthrough(cat)
-                     else idx)
 
         if cat != InstructionCategory.PSEUDOOP:
+            if not blocks:
+                blocks.append(Block(None, 0))
+
+            prev_seq = not instruction_cat_is_nofallthrough(cat)
+
             if instruction_cat_is_jump(cat):
                 dest = rest[-1].rsplit(None, 1)[-1]
                 jtab.append(JumpTableEntry(
@@ -280,8 +283,6 @@ def get_structure(line_iter, regs_function):
             linstr = instr.lower()
 
             B().push(idx, (instr, rest), regs, linstr)
-        else:
-            B().push(idx, (instr, rest))
 
     return blocks, jtab
 
@@ -328,11 +329,13 @@ f"""<TR>
 </FONT></TD></TR>""", file=f)
 
     if flags & GraphDisplayFlags.INSTRUCTIONS:
-        print(
+        ops = b.ops()
+        if ops:
+            print(
 f"""<TR>
 <TD ALIGN="CENTER" COLSPAN="2">
 <FONT COLOR="darkslateblue">
-{', '.join(sorted(map(str.lower, b.ops())))}
+{', '.join(sorted(ops))}
 </FONT></TD></TR>""", file=f)
 
     alt = False
@@ -345,8 +348,8 @@ f"""<TR>
 def write_edge(f, src_b, src_nl, dst_b, jump_type):
     src_bn = block_name(src_b)
     dst_bn = block_name(dst_b)
-    port = '' if jump_type == JumpType.NORMAL else ':s'
-    print(f"{src_bn}:l{src_nl}{port} -> {dst_bn}:n;")
+    port = f':l{src_nl}' if jump_type == JumpType.NORMAL else ':s'
+    print(f"{src_bn}{port} -> {dst_bn}:n;")
 
 def write_graph(f, name, blocks, jtab, flags):
     print("digraph \"%s\" {" % name, file=f)
