@@ -251,6 +251,9 @@ def get_structure(line_iter, regs_function):
 
 # Graph writing functions
 
+GraphDisplayFlags = enum.IntFlag('GraphDisplayFlags',
+                                 ['REGISTERS', 'INSTRUCTIONS'])
+
 def block_name(b):
     return f"block_at_{b.starting_line()}"
 
@@ -268,21 +271,23 @@ def block_title(b):
     name = b.name()
     return '(start)' if name is None else (name + ':')
 
-def write_block(f, b):
+def write_block(f, b, flags):
     print(f"""{block_name(b)} [label=<
     <TABLE>
 <TR><TD COLSPAN="2" ALIGN="LEFT"><B>
 {block_title(b)}
 </B></TD></TR> """, file=f)
 
-    for reg, lines in b.regs().items():
-        print(f"""<TR>
+    if flags & GraphDisplayFlags.REGISTERS:
+        for reg, lines in b.regs().items():
+            print(f"""<TR>
 <TD ALIGN="CENTER" COLSPAN="2">
 <FONT COLOR="red">
 {reg}: {' '.join(map(lambda x: str(x+1), lines))}
 </FONT></TD></TR>""", file=f)
 
-    print(f"""<TR>
+    if flags & GraphDisplayFlags.INSTRUCTIONS:
+        print(f"""<TR>
 <TD ALIGN="CENTER" COLSPAN="2">
 <FONT COLOR="darkslateblue">
 {', '.join(sorted(map(str.lower, b.ops())))}
@@ -292,18 +297,18 @@ def write_block(f, b):
         write_line(f, i, l)
     print("</TABLE>>];", file=f)
 
-def write_edge(f, src_b, src_nl, dst_b, t):
+def write_edge(f, src_b, src_nl, dst_b, jump_type):
     src_bn = block_name(src_b)
     dst_bn = block_name(dst_b)
-    port = '' if t == JumpType.NORMAL else ':s'
+    port = '' if jump_type == JumpType.NORMAL else ':s'
     print(f"{src_bn}:l{src_nl}{port} -> {dst_bn}:n;")
 
-def write_graph(f, name, blocks, jtab):
+def write_graph(f, name, blocks, jtab, flags):
     print("digraph \"%s\" {" % name, file=f)
     print("node [shape=plaintext, style=filled, color=\"#D0D0D0\"];")
 
     for b in blocks:
-        write_block(f, b)
+        write_block(f, b, flags)
 
     block_dict = {b.name(): b for b in blocks}
     for e in jtab:
@@ -325,17 +330,26 @@ def main():
     parser.add_argument("-s", "--syntax",
                         choices=list(syntax_tab.keys()),
                         default='att')
+    parser.add_argument("-r", "--registers",
+                        action='store_const',
+                        const=GraphDisplayFlags.REGISTERS,
+                        default=0)
+    parser.add_argument("-i", "--instructions",
+                        action='store_const',
+                        const=GraphDisplayFlags.INSTRUCTIONS,
+                        default=0)
 
     parser.add_argument("filename", nargs='?', default='-')
 
     ns = parser.parse_args()
     name = ns.filename
     syntax = syntax_tab[ns.syntax]
+    flags = ns.registers | ns.instructions
 
     f = sys.stdin if name == '-' else open(name, 'r')
 
     b, j = get_structure(read_asm_lines(f), extract_regs_funcs[syntax])
-    write_graph(sys.stdout, name, b, j)
+    write_graph(sys.stdout, name, b, j, flags)
     return 0
 
 if __name__ == "__main__":
