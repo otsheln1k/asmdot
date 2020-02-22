@@ -33,15 +33,50 @@ import argparse
 
 # Reading code
 
-def remove_comments(l):
-    return l.split('#', 1)[0]
+AssemblerSyntax = enum.Enum("AssemblerSyntax",
+                            ["INTEL", "ATT"])
+
+CharClass = enum.Enum('CharClass',
+                      ['MISC', 'SEPARATOR', 'LINE_COMMENT'])
+
+def char_class_att(c):
+    return {'#': CharClass.LINE_COMMENT,
+            ';': CharClass.SEPARATOR}.get(c, CharClass.MISC)
+
+def char_class_intel(c):
+    return {';': CharClass.LINE_COMMENT,
+            '$': CharClass.SEPARATOR}.get(c, CharClass.MISC)
+
+char_class_funcs = {
+    AssemblerSyntax.INTEL: char_class_intel,
+    AssemblerSyntax.ATT: char_class_att,
+}
 
 # file -> (line_number, text) get
-def read_asm_lines(f):
+def read_asm_lines(f, ch_class):
     for i, l in enumerate(f):
-        ncl = remove_comments(l)
-        for s in ncl.split(';'):
-            yield i, s
+        escape = False
+        quote = None
+        acc = ""
+        for c in l:
+            if c == '\\':
+                escape = True
+            elif c in "\"'" \
+                 and not escape \
+                 and (quote is None or c == quote):
+                quote = c if quote is None else None
+            elif not quote:
+                cls = ch_class(c)
+                if cls == CharClass.LINE_COMMENT:
+                    break
+                elif cls == CharClass.SEPARATOR:
+                    yield i, acc
+                    acc = ""
+                    continue
+
+            acc += c
+        if acc:
+            yield i, acc
 
 # str -> str gen
 def get_args(rest):
@@ -52,7 +87,9 @@ def get_args(rest):
     for c in rest:
         if c == '\\':
             escape = True
-        if c in "\"'" and not escape and (quote is None or c == quote):
+        elif c in "\"'" \
+             and not escape \
+             and (quote is None or c == quote):
             quote = c if quote is None else None
         elif quote:
             pass
@@ -133,9 +170,6 @@ def extract_regs_intel(s):
         for reg in regexp.findall(s):
             yield reg
 
-AssemblerSyntax = enum.Enum("AssemblerSyntax",
-                            ["INTEL", "ATT"])
-
 extract_regs_funcs = {
     AssemblerSyntax.INTEL: extract_regs_intel,
     AssemblerSyntax.ATT: extract_regs_att,
@@ -159,7 +193,8 @@ opcode_category_pred_table = [
     (OpcodeCategory.PSEUDOOP, lambda s: s.startswith('.')),
     (OpcodeCategory.JUMP_AWAY, lambda s: s == 'jmp'),
     (OpcodeCategory.RETURN, lambda s: s in ('ret', 'retf')),
-    (OpcodeCategory.JUMP, lambda s: s == 'call' or s.startswith('j')),
+    (OpcodeCategory.JUMP,
+     lambda s: s in ('call', 'loop') or s.startswith('j')),
 ]
 
 # str -> OpcodeCategory
@@ -171,7 +206,7 @@ def opcode_cat(opcode):
     return OpcodeCategory.MISC
 
 
-# Build internal representation of the graph
+# Build the internal representation of the graph
 
 class Block:
     def __init__(self, name, line):
@@ -222,20 +257,19 @@ def get_structure(line_iter, regs_function):
                 jtab.append(JumpTableEntry(
                     B(), prev_line, label, JumpType.NEXT))
             blocks.append(Block(label, idx))
-        elif not blocks:
-            blocks.append(Block(None, 0))
 
         if instr is None:
             continue
 
-        cat = opcode_cat(instr)
+        if not blocks:
+            blocks.append(Block(None, 0))
 
+        cat = opcode_cat(instr)
         prev_line = None if opcode_cat_is_nofallthrough(cat) else idx
 
         if cat != OpcodeCategory.PSEUDOOP:
             if opcode_cat_is_jump(cat):
                 dest = rest[-1].rsplit(None, 1)[-1]
-                # dest = ",".join(rest) if len(rest) != 1 else rest[0]
                 jtab.append(JumpTableEntry(
                     B(), idx, dest, JumpType.NORMAL))
 
@@ -352,7 +386,12 @@ def main():
 
     f = sys.stdin if name == '-' else open(name, 'r')
 
-    b, j = get_structure(read_asm_lines(f), extract_regs_funcs[syntax])
+    char_class_func = char_class_funcs[syntax]
+    regs_func = extract_regs_funcs[syntax]
+
+    b, j = get_structure(
+        read_asm_lines(f, char_class_func),
+        regs_func)
     write_graph(sys.stdout, name, b, j, flags)
     return 0
 
