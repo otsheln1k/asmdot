@@ -176,34 +176,36 @@ extract_regs_funcs = {
 }
 
 
-# Opcode categories
+# Instruction categories
 
-OpcodeCategory = enum.Enum("OpcodeCategory",
+InstructionCategory = enum.Enum("InstructionCategory",
                            ["PSEUDOOP", "JUMP", "JUMP_AWAY",
                             "RETURN", "MISC"])
 
-def opcode_cat_is_jump(cat):
-    return cat in (OpcodeCategory.JUMP, OpcodeCategory.JUMP_AWAY)
+def instruction_cat_is_jump(cat):
+    return cat in (InstructionCategory.JUMP,
+                   InstructionCategory.JUMP_AWAY)
 
-def opcode_cat_is_nofallthrough(cat):
-    return cat in (OpcodeCategory.JUMP_AWAY, OpcodeCategory.RETURN)
+def instruction_cat_is_nofallthrough(cat):
+    return cat in (InstructionCategory.JUMP_AWAY,
+                   InstructionCategory.RETURN)
 
 # Note: order is significant
-opcode_category_pred_table = [
-    (OpcodeCategory.PSEUDOOP, lambda s: s.startswith('.')),
-    (OpcodeCategory.JUMP_AWAY, lambda s: s == 'jmp'),
-    (OpcodeCategory.RETURN, lambda s: s in ('ret', 'retf')),
-    (OpcodeCategory.JUMP,
+instruction_category_pred_table = [
+    (InstructionCategory.PSEUDOOP, lambda s: s.startswith('.')),
+    (InstructionCategory.JUMP_AWAY, lambda s: s == 'jmp'),
+    (InstructionCategory.RETURN, lambda s: s in ('ret', 'retf')),
+    (InstructionCategory.JUMP,
      lambda s: s in ('call', 'loop') or s.startswith('j')),
 ]
 
-# str -> OpcodeCategory
-def opcode_cat(opcode):
-    lopcode = opcode.lower()
-    for cat, pred in opcode_category_pred_table:
-        if pred(lopcode):
+# str -> InstructionCategory
+def instruction_category(instruction):
+    lower = instruction.lower()
+    for cat, pred in instruction_category_pred_table:
+        if pred(lower):
             return cat
-    return OpcodeCategory.MISC
+    return InstructionCategory.MISC
 
 
 # Build the internal representation of the graph
@@ -264,11 +266,12 @@ def get_structure(line_iter, regs_function):
         if not blocks:
             blocks.append(Block(None, 0))
 
-        cat = opcode_cat(instr)
-        prev_line = None if opcode_cat_is_nofallthrough(cat) else idx
+        cat = instruction_category(instr)
+        prev_line = (None if instruction_cat_is_nofallthrough(cat)
+                     else idx)
 
-        if cat != OpcodeCategory.PSEUDOOP:
-            if opcode_cat_is_jump(cat):
+        if cat != InstructionCategory.PSEUDOOP:
+            if instruction_cat_is_jump(cat):
                 dest = rest[-1].rsplit(None, 1)[-1]
                 jtab.append(JumpTableEntry(
                     B(), idx, dest, JumpType.NORMAL))
@@ -298,41 +301,45 @@ def rebuild_line(instr, args):
 def write_line(f, nl, line_parts, alt=False):
     style = 'BGCOLOR="gray78"' if not alt else 'BGCOLOR="gray70"'
     print(
-f'''<TR>
+f"""<TR>
 <TD {style}><FONT COLOR="gray30">{nl+1}</FONT></TD>
 <TD {style} ALIGN="LEFT" PORT="l{nl}">{rebuild_line(*line_parts)}</TD>
-</TR>''', file=f)
+</TR>""", file=f)
 
 def block_title(b):
     name = b.name()
-    return '(start)' if name is None else (name + ':')
+    return '(start)' if name is None else f"{name}:"
 
 def write_block(f, b, flags):
-    print(f"""{block_name(b)} [label=<
-    <TABLE CELLSPACING="0" CELLPADDING="4" CELLBORDER="0">
+    print(
+f"""{block_name(b)} [label=<
+<TABLE CELLSPACING="0" CELLPADDING="4" CELLBORDER="0">
 <TR><TD COLSPAN="2" ALIGN="LEFT"><B>
 {block_title(b)}
-</B></TD></TR> """, file=f)
+</B></TD></TR>""", file=f)
 
     if flags & GraphDisplayFlags.REGISTERS:
         for reg, lines in b.regs().items():
-            print(f"""<TR>
+            print(
+f"""<TR>
 <TD ALIGN="CENTER" COLSPAN="2">
 <FONT COLOR="red">
 {reg}: {' '.join(map(lambda x: str(x+1), lines))}
 </FONT></TD></TR>""", file=f)
 
     if flags & GraphDisplayFlags.INSTRUCTIONS:
-        print(f"""<TR>
+        print(
+f"""<TR>
 <TD ALIGN="CENTER" COLSPAN="2">
 <FONT COLOR="darkslateblue">
 {', '.join(sorted(map(str.lower, b.ops())))}
-</FONT></TD></TR>""")
+</FONT></TD></TR>""", file=f)
 
     alt = False
     for i, l in b.lines():
         write_line(f, i, l, alt)
         alt = not alt
+
     print("</TABLE>>];", file=f)
 
 def write_edge(f, src_b, src_nl, dst_b, jump_type):
