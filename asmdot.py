@@ -258,13 +258,15 @@ def block_name(b):
     return f"block_at_{b.starting_line()}"
 
 def rebuild_line(instr, args):
-    return f"{instr} {','.join(args)}" if args else instr
+    args_s = ' ' + ','.join(args) if args else ''
+    return f"<FONT COLOR=\"blue4\">{instr}</FONT>{args_s}"
 
-def write_line(f, nl, line_parts):
+def write_line(f, nl, line_parts, alt=False):
+    style = 'BGCOLOR="gray78"' if not alt else 'BGCOLOR="gray70"'
     print(
 f'''<TR>
-<TD><FONT COLOR="#606060">{nl+1}</FONT></TD>
-<TD ALIGN="LEFT" PORT="l{nl}">{rebuild_line(*line_parts)}</TD>
+<TD {style}><FONT COLOR="gray30">{nl+1}</FONT></TD>
+<TD {style} ALIGN="LEFT" PORT="l{nl}">{rebuild_line(*line_parts)}</TD>
 </TR>''', file=f)
 
 def block_title(b):
@@ -273,7 +275,7 @@ def block_title(b):
 
 def write_block(f, b, flags):
     print(f"""{block_name(b)} [label=<
-    <TABLE>
+    <TABLE CELLSPACING="0" CELLPADDING="4" CELLBORDER="0">
 <TR><TD COLSPAN="2" ALIGN="LEFT"><B>
 {block_title(b)}
 </B></TD></TR> """, file=f)
@@ -293,8 +295,10 @@ def write_block(f, b, flags):
 {', '.join(sorted(map(str.lower, b.ops())))}
 </FONT></TD></TR>""")
 
+    alt = False
     for i, l in b.lines():
-        write_line(f, i, l)
+        write_line(f, i, l, alt)
+        alt = not alt
     print("</TABLE>>];", file=f)
 
 def write_edge(f, src_b, src_nl, dst_b, jump_type):
@@ -305,7 +309,7 @@ def write_edge(f, src_b, src_nl, dst_b, jump_type):
 
 def write_graph(f, name, blocks, jtab, flags):
     print("digraph \"%s\" {" % name, file=f)
-    print("node [shape=plaintext, style=filled, color=\"#D0D0D0\"];")
+    print("node [shape=plaintext, style=filled, color=\"gray85\"];")
 
     for b in blocks:
         write_block(f, b, flags)
