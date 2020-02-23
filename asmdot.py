@@ -139,40 +139,33 @@ register_regexps = [
     r"cr[0-48]",
     r"db[0-367]",
     r"tr[67]",
-    r"st(\([0-7]\))?",
+    r"st(?!\()",
+    r"st\([0-7]\)",
     r"[xyz]mm([0-9]|[12][0-5]|3[01])",
     r"[sd]il",
     r"[sb]pl",
     r"k[0-7]"
 ]
 
+def extract_regs_common(s, regexps):
+    for regexp in regexps:
+        for m in regexp.finditer(s):
+            yield m.group(0)
+
 compile_regexps = lambda l: list(map(lambda s: re.compile(s, re.I), l))
 
-register_common_regexp_att = re.compile(r"%\w+")
 register_regexps_att = compile_regexps(
     map(lambda s: f'%{s}', register_regexps))
 
-# str -> str gen
-def extract_regs_att(s):
-    for reg in register_common_regexp_att.findall(s):
-        for regexp in register_regexps_att:
-            if regexp.fullmatch(reg):
-                break
-        else:
-            raise ValueError(f"Unknown register: {reg!r}")
-        yield reg
-
 register_regexps_intel = compile_regexps(
-    map(lambda s: f"\\b{s}\\b", register_regexps))
-
-def extract_regs_intel(s):
-    for regexp in register_regexps_intel:
-        for reg in regexp.findall(s):
-            yield reg
+    map(lambda s: f"\\b{s}",
+        register_regexps))
 
 extract_regs_funcs = {
-    AssemblerSyntax.INTEL: extract_regs_intel,
-    AssemblerSyntax.ATT: extract_regs_att,
+    AssemblerSyntax.INTEL:
+    lambda s: extract_regs_common(s, register_regexps_att),
+    AssemblerSyntax.ATT:
+    lambda s: extract_regs_common(s, register_regexps_intel),
 }
 
 
@@ -274,20 +267,24 @@ def get_structure(line_iter, regs_function):
     blocks = []
     B = lambda: blocks[-1]
     prev_seq = False
+    can_merge = False
     for idx, line in line_iter:
         label, instr, rest = split_line(line)
 
         if label is not None:
-            if blocks and B().empty():
+            if can_merge:
                 B().add_name(label)
             else:
                 if prev_seq:
                     B().add_jump(
                         JumpTableEntry(None, label, JumpType.NEXT))
                 blocks.append(Block(label, idx))
+                can_merge = True
 
         if instr is None:
             continue
+
+        can_merge = False
 
         cat = instruction_category(instr)
 
