@@ -388,7 +388,7 @@ f"""<TR><TD COLSPAN="2" ALIGN="LEFT"><B>
 </B></TD></TR>""", file=f)
 
     if flags & GraphDisplayFlags.REGISTERS:
-        for reg, lines in b.regs().items():
+        for reg, lines in sorted(b.regs().items()):
             print(
 f"""<TR>
 <TD ALIGN="CENTER" COLSPAN="2">
