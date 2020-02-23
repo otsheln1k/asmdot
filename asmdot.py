@@ -158,14 +158,14 @@ register_regexps_att = compile_regexps(
     map(lambda s: f'%{s}', register_regexps))
 
 register_regexps_intel = compile_regexps(
-    map(lambda s: f"\\b{s}",
+    map(lambda s: f"\\b{s}" + ("\\b" if not s.endswith(r'\)') else ""),
         register_regexps))
 
 extract_regs_funcs = {
     AssemblerSyntax.INTEL:
-    lambda s: extract_regs_common(s, register_regexps_att),
-    AssemblerSyntax.ATT:
     lambda s: extract_regs_common(s, register_regexps_intel),
+    AssemblerSyntax.ATT:
+    lambda s: extract_regs_common(s, register_regexps_att),
 }
 
 
