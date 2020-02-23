@@ -449,19 +449,24 @@ def main():
                   "intel": AssemblerSyntax.INTEL}
     parser.add_argument("-s", "--syntax",
                         choices=list(syntax_tab.keys()),
-                        default='att')
+                        default='att',
+                        help='assembler syntax to expect')
     parser.add_argument("-r", "--registers",
                         action='store_const',
                         const=GraphDisplayFlags.REGISTERS,
-                        default=0)
+                        default=0,
+                        help='display list of used registers for each block')
     parser.add_argument("-i", "--instructions",
                         action='store_const',
                         const=GraphDisplayFlags.INSTRUCTIONS,
-                        default=0)
+                        default=0,
+                        help='display list of used instructions for each block')
     parser.add_argument("-U", "--skip-unused-labels",
-                        action='store_true')
+                        action='store_true',
+                        help='merge each unreferenced block with the previous one')
 
-    parser.add_argument("filename", nargs='?', default='-')
+    parser.add_argument("filename", nargs='?', default='-',
+                        help='file name to read code from, or `-\' for standard input')
 
     ns = parser.parse_args()
     name = ns.filename
