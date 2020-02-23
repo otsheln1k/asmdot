@@ -213,7 +213,7 @@ def instruction_category(instruction):
 class Block:
     def __init__(self, name, line):
         self._lines = []
-        self._name = name
+        self._names = [name]
         self._regs = []
         self._ops = set()
         self._line = line
@@ -225,8 +225,11 @@ class Block:
         if op is not None:
             self._ops.add(op.lower())
 
-    def name(self):
-        return self._name
+    def add_name(self, name):
+        self._names.append(name)
+
+    def names(self):
+        return self._names
 
     def ops(self):
         return self._ops
@@ -258,10 +261,13 @@ def get_structure(line_iter, regs_function):
         label, instr, rest = split_line(line)
 
         if label is not None:
-            if prev_seq or blocks and B().empty():
-                jtab.append(JumpTableEntry(
-                    B(), None, label, JumpType.NEXT))
-            blocks.append(Block(label, idx))
+            if blocks and B().empty():
+                B().add_name(label)
+            else:
+                if prev_seq:
+                    jtab.append(JumpTableEntry(
+                        B(), None, label, JumpType.NEXT))
+                blocks.append(Block(label, idx))
 
         if instr is None:
             continue
@@ -307,16 +313,18 @@ f"""<TR>
 <TD {style} ALIGN="LEFT" PORT="l{nl}">{rebuild_line(*line_parts)}</TD>
 </TR>""", file=f)
 
-def block_title(b):
-    name = b.name()
+def block_title(name):
     return '(start)' if name is None else f"{name}:"
 
 def write_block(f, b, flags):
     print(
 f"""{block_name(b)} [label=<
-<TABLE CELLSPACING="0" CELLPADDING="4" CELLBORDER="0">
+<TABLE CELLSPACING="0" CELLPADDING="4" CELLBORDER="0">""")
+
+    for n in b.names():
+        print(f"""
 <TR><TD COLSPAN="2" ALIGN="LEFT"><B>
-{block_title(b)}
+{block_title(n)}
 </B></TD></TR>""", file=f)
 
     if flags & GraphDisplayFlags.REGISTERS:
@@ -358,7 +366,7 @@ def write_graph(f, name, blocks, jtab, flags):
     for b in blocks:
         write_block(f, b, flags)
 
-    block_dict = {b.name(): b for b in blocks}
+    block_dict = {n: b for b in blocks for n in b.names()}
     for e in jtab:
         src_b, src_nl, dst_bn, jump_type = e
         dst_b = block_dict[dst_bn]
