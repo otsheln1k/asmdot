@@ -210,6 +210,11 @@ def instruction_category(instruction):
 
 # Build the internal representation of the graph
 
+JumpType = enum.Enum("JumpType",
+                     ["NORMAL", "NEXT"])
+JumpTableEntry = namedtuple("JumpTableEntry",
+                            ["index", "dest", "type"])
+
 class Block:
     def __init__(self, name, line):
         self._lines = []
@@ -217,6 +222,7 @@ class Block:
         self._regs = []
         self._ops = set()
         self._line = line
+        self._jumps = []
 
     def push(self, nl, line, regs=None, op=None):
         self._lines.append((nl, line))
@@ -224,6 +230,17 @@ class Block:
             self._regs.append((nl, map(str.lower, regs)))
         if op is not None:
             self._ops.add(op.lower())
+
+    def merge(self, other):
+        self._lines.extend(other._lines)
+        self._regs.extend(other._regs)
+        self._ops.update(other._ops)
+
+        self._jumps = [
+            j
+            for j in self._jumps
+            if j.type != JumpType.NEXT
+        ] + other._jumps
 
     def add_name(self, name):
         self._names.append(name)
@@ -246,15 +263,15 @@ class Block:
     def empty(self):
         return self._lines == []
 
-JumpType = enum.Enum("JumpType",
-                     ["NORMAL", "NEXT"])
-JumpTableEntry = namedtuple("JumpTableEntry",
-                            ["block", "index", "dest_block", "type"])
+    def add_jump(self, jumps):
+        self._jumps.append(jumps)
 
-# (line_number, line) iter => (blocks, jtab)
+    def jumps(self):
+        return self._jumps
+
+# (line_number, line) iter => blocks
 def get_structure(line_iter, regs_function):
     blocks = []
-    jtab = []
     B = lambda: blocks[-1]
     prev_seq = False
     for idx, line in line_iter:
@@ -265,8 +282,8 @@ def get_structure(line_iter, regs_function):
                 B().add_name(label)
             else:
                 if prev_seq:
-                    jtab.append(JumpTableEntry(
-                        B(), None, label, JumpType.NEXT))
+                    B().add_jump(
+                        JumpTableEntry(None, label, JumpType.NEXT))
                 blocks.append(Block(label, idx))
 
         if instr is None:
@@ -282,15 +299,61 @@ def get_structure(line_iter, regs_function):
 
             if instruction_cat_is_jump(cat):
                 dest = rest[-1].rsplit(None, 1)[-1]
-                jtab.append(JumpTableEntry(
-                    B(), idx, dest, JumpType.NORMAL))
+                B().add_jump(
+                    JumpTableEntry(idx, dest, JumpType.NORMAL))
 
             regs = append_dedup(map(regs_function, rest))
             linstr = instr.lower()
 
             B().push(idx, (instr, rest), regs, linstr)
 
-    return blocks, jtab
+    return blocks
+
+def blocks_dict(blocks):
+    return {n: b for b in blocks for n in b.names()}
+
+def merge_unused(blocks):
+    class BlockWrapper:
+        Flags = enum.IntFlag('BlockWrapper.Flags',
+                             ['INTERNAL', 'USED'])
+
+        def __init__(self, block):
+            self.block = block
+            self.flags = 0
+
+        def add_flag(self, f):
+            self.flags |= f
+
+        def can_merge(self):
+            return self.flags == self.Flags.INTERNAL
+
+        def __getattr__(self, n):
+            return getattr(self.block, n)
+
+    bwrap = [BlockWrapper(b) for b in blocks]
+    block_dict = blocks_dict(bwrap)
+    jdest = lambda j: block_dict[j.dest]
+    for b in blocks:
+        for j in b.jumps():
+            if j.type == JumpType.NEXT:
+                jdest(j).add_flag(BlockWrapper.Flags.INTERNAL)
+            elif j.type == JumpType.NORMAL:
+                jdest(j).add_flag(BlockWrapper.Flags.USED)
+
+    # [BlockWrapper] => Block gen
+    def process_blocks(bwrap):
+        prev = None
+        for b in bwrap:
+            if prev is not None and b.can_merge():
+                prev.merge(b.block)
+            else:
+                if prev is not None:
+                    yield prev
+                prev = b.block
+        if prev is not None:
+            yield prev
+
+    return list(process_blocks(bwrap))
 
 
 # Graph writing functions
@@ -322,8 +385,8 @@ f"""{block_name(b)} [label=<
 <TABLE CELLSPACING="0" CELLPADDING="4" CELLBORDER="0">""")
 
     for n in b.names():
-        print(f"""
-<TR><TD COLSPAN="2" ALIGN="LEFT"><B>
+        print(
+f"""<TR><TD COLSPAN="2" ALIGN="LEFT"><B>
 {block_title(n)}
 </B></TD></TR>""", file=f)
 
@@ -359,18 +422,19 @@ def write_edge(f, src_b, src_nl, dst_b, jump_type):
     port = f':l{src_nl}' if jump_type == JumpType.NORMAL else ':s'
     print(f"{src_bn}{port} -> {dst_bn}:n;")
 
-def write_graph(f, name, blocks, jtab, flags):
+def write_graph(f, name, blocks, flags):
     print("digraph \"%s\" {" % name, file=f)
     print("node [shape=plaintext, style=filled, color=\"gray85\"];")
 
     for b in blocks:
         write_block(f, b, flags)
 
-    block_dict = {n: b for b in blocks for n in b.names()}
-    for e in jtab:
-        src_b, src_nl, dst_bn, jump_type = e
-        dst_b = block_dict[dst_bn]
-        write_edge(f, src_b, src_nl, dst_b, jump_type)
+    block_dict = blocks_dict(blocks)
+    for b in blocks:
+        for j in b.jumps():
+            src_nl, dst_bn, jump_type = j
+            dst_b = block_dict[dst_bn]
+            write_edge(f, b, src_nl, dst_b, jump_type)
 
     print("}")
 
@@ -394,6 +458,8 @@ def main():
                         action='store_const',
                         const=GraphDisplayFlags.INSTRUCTIONS,
                         default=0)
+    parser.add_argument("-U", "--skip-unused-labels",
+                        action='store_true')
 
     parser.add_argument("filename", nargs='?', default='-')
 
@@ -407,10 +473,14 @@ def main():
     char_class_func = char_class_funcs[syntax]
     regs_func = extract_regs_funcs[syntax]
 
-    b, j = get_structure(
+    b = get_structure(
         read_asm_lines(f, char_class_func),
         regs_func)
-    write_graph(sys.stdout, name, b, j, flags)
+
+    if ns.skip_unused_labels:
+        b = merge_unused(b)
+
+    write_graph(sys.stdout, name, b, flags)
     return 0
 
 if __name__ == "__main__":
